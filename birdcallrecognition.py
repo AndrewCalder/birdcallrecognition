@@ -9,11 +9,11 @@ import numpy;
 
 #Initialize variables
 #Acceptable file types
-fileTypesAllowed = ["mp3"];#["wav", "mp3"];
+fileTypesAllowed = ["mp3"];#[, "wav", "mp3"];
 numFileTypes = len(fileTypesAllowed);
 #Training, validation, and testing data in these folders
 dataPathPrefix = "data_";
-trainingDataPaths = ["crow"];#, "cardinal"];
+trainingDataPaths = ["crow", "cardinal"];
 numDataPaths = len(trainingDataPaths);
 
 #Sample sound file
@@ -177,12 +177,12 @@ changes).
 #Set number of clusters and initial centroids
 print("Calculating cluster centroids...");
 numClusters = numDataPaths;     #the number of bird species
-clusters = [[0 for j in range(trainSizeTotal)] for c in range(numClusters)];  #enough space for all data in single cluster
+clusters = [[-1 for j in range(trainSizeTotal)] for c in range(numClusters)];  #enough space for all data in single cluster
 centroids = [[0.0 for k in range(numPredictors)] for c in range(numClusters)];
 clusterSize = [0 for c in range(numClusters)];
 #We'll also use these to store transformed data (each point is average of each predictor value- it turns out those are all arrays)
 dataTrainConcise = [[0.0 for k in range(numVars)] for j in range(trainSizeTotal)];
-#dataValConcise = [0 for j in range(valSizeTotal)]; TODO
+dataValConcise = [[0.0 for k in range(numVars)] for j in range(valSizeTotal)];
 for c in range(numClusters):
     #Set initial centroids
     #   Here, a centroid is a set of values, one for each predictor
@@ -192,16 +192,27 @@ for c in range(numClusters):
     for j in range(trainSizeTotal):
         #Does this sample have the right species?
         if (dataTrain[j][numVars-1] == trainingDataPaths[c]):
-            #print("\tTRAINING SAMPLE " + str(j) + " MATCHED TO SPECIES " + trainingDataPaths[c]);
+            print("\tTRAINING SAMPLE " + str(j) + " MATCHED TO SPECIES " + trainingDataPaths[c]);
             for k in range(numPredictors):
                 #Each predictor var is actually a giant array, so take the average of it
                 predVarMean = sum(dataTrain[j][k][0])/len(dataTrain[j][k][0]);  #don't ask about the extra [0], it's just there and I'm too scared to try and fix it
                 dataTrainConcise[j][k] = predVarMean;
                 centroids[c][k] += predVarMean;
-                #print("\t\tPred var avg: " + str(predVarMean));
+                print("\t\tPred var avg: " + str(predVarMean));
             clusterSize[c] += 1
-            #TODO: do all this 'concise' business elsewhere (at end of previous step)
+            #TODO: do all this 'concise' business elsewhere (at end of previous step?)
             dataTrainConcise[j][5] = trainingDataPaths[c];
+            
+    #TODO: DO ALL THIS ELSEWHERE BUT WE NEED IT NOW!!!!
+    for j in range(valSizeTotal):
+        if (dataVal[j][numVars-1] == trainingDataPaths[c]):
+            for k in range(numPredictors):
+                #Each predictor var is actually a giant array, so take the average of it
+                predVarMean = sum(dataVal[j][k][0])/len(dataVal[j][k][0]);  #don't ask about the extra [0], it's just there and I'm too scared to try and fix it
+                dataValConcise[j][k] = predVarMean;
+            dataValConcise[j][5] = trainingDataPaths[c];
+    #END TODO
+            
     #We've stored running sums, now divide them to calculate the final average
     for k in range(numPredictors):
         centroids[c][k] /= clusterSize[c];
@@ -214,41 +225,48 @@ for j in range(trainSizeTotal):
     for c in range(numClusters):
         for k in range(numPredictors):
             #The deviation of this example
-            dev = (dataTrainConcise[j][k] - centroids[c][k]);
+            dev = abs(dataTrainConcise[j][k] - centroids[c][k]);
+            cdt[k] += dev;
             cdt[k] += dev;
             #print("\tdev: " + str(dev));
         #print("");
 #We have running sum, now take average
+allowanceFactor = 1.0;
 for k in range(numPredictors):
-    cdt[k] /= trainSizeTotal;
+    cdt[k] = abs(cdt[k]/trainSizeTotal);
+    cdt[k] *= allowanceFactor;
 #Do cluster reassignment / centroid recomputation until no centroids are recomputed
 prevClusters = 0;
 passes = 1;
+acceptablePredictorThresholdProportion = 0.75;   #how many features do I need to 'pass' for in order to get in a cluster?
+acceptablePredictorThreshold = round(acceptablePredictorThresholdProportion * numPredictors);
 while (prevClusters != clusters):
-    print("\tCluster pass 1...");
+    print("\tCluster pass " + str(passes) + "...");
     #Store previous cluster centroids
     prevClusters = clusters;
     #Wipe cluster data
     for c in range(numClusters):
         for j in range(trainSizeTotal):
-           clusters[c][j] = 0;
+           clusters[c][j] = -1;
         clusterSize[c] = 0;
     #Iterate through samples, find if each is near a centroid
-    numAcceptablePredictors = 0;
+    acceptablePredictors = [[0 for c in range(numClusters)] for j in range(trainSizeTotal)];      #to determine which cluster to assign this sample to
     for j in range(trainSizeTotal):
-        numAcceptablePredictors = 0;
         for c in range(numClusters):
             for k in range(numPredictors):
-                dev = (dataTrainConcise[j][k] - centroids[c][k]);
+                dev = abs(dataTrainConcise[j][k] - centroids[c][k]);
                 if (dev <= cdt[k]):
                     #Deviation is within threshold, it's a member
-                    numAcceptablePredictors += 1;
-            #Do we accept?
-            print("Acceptable predictors (out of 5) for sample " + str(j) + ": " + str(numAcceptablePredictors));
-            if (numAcceptablePredictors >= 1):
-                #Accept to this cluster
-                clusters[c][clusterSize[c]] = j;    #just store the index
-                clusterSize[c] += 1;
+                    acceptablePredictors[j][c] += 1;
+        #Do we fit in a cluster?
+        mostLikelyClusterResult = max(acceptablePredictors[j]);
+        mostLikelyClusterIndex = acceptablePredictors[j].index(mostLikelyClusterResult);    #TODO address 'ties', right now it just gets the first index
+        print(acceptablePredictors[j]);
+        print("\tAcceptable predictors (out of 5) for sample " + str(j) + ": " + str(mostLikelyClusterResult) + ", in cluster " + str(mostLikelyClusterIndex));
+        if (mostLikelyClusterResult >= acceptablePredictorThreshold):
+            #Accept to this cluster
+            clusters[mostLikelyClusterIndex][clusterSize[mostLikelyClusterIndex]] = j;    #just store the index
+            clusterSize[mostLikelyClusterIndex] += 1;
     #Recompute centroids
     for c in range(numClusters):
         for k in range(numPredictors):
@@ -259,6 +277,12 @@ while (prevClusters != clusters):
     for c in range(numClusters):
         for k in range(numPredictors):
             centroids[c][k] /= clusterSize[c];
+    print("\t\tPrevClusters:");
+    print(prevClusters);
+    print("\t\tClusters:");
+    print(clusters);
+    print("\t\tCentroids:");
+    print(centroids);
     passes += 1;
 
 
@@ -266,8 +290,39 @@ while (prevClusters != clusters):
 #   PERFORM VALIDATION
 #
 print("Validating...");
-#TODO
+#TODO do this....
 
-#Perform testing
+
+#
+#   PERFORM TESTING
+#
 print("Testing...");
 #TODO
+#FOR NOW: We'll use the validation set for testing, because we haven't implemented validation yet
+#dataTest = dataVal;
+dataTestConcise = dataValConcise;
+testSizeTotal = valSizeTotal;
+#Classify each element of the testing set
+targetClass = ["" for i in range(testSizeTotal)]
+acceptablePredictors = [[0 for c in range(numClusters)] for j in range(testSizeTotal)];      #to determine which cluster to assign this sample to
+for j in range(testSizeTotal):
+    #Find if the sample is near a centroid
+    for c in range(numClusters):
+        for k in range(numPredictors):
+            dev = abs(dataTestConcise[j][k] - centroids[c][k]);
+            if (dev <= cdt[k]):
+                #Deviation is within threshold, it's a member
+                acceptablePredictors[j][c] += 1;
+    #Do we fit in a cluster?
+    mostLikelyClusterResult = max(acceptablePredictors[j]);
+    mostLikelyClusterIndex = acceptablePredictors[j].index(mostLikelyClusterResult);    #TODO address 'ties', right now it just gets the first index
+    print(acceptablePredictors[j]);
+    print("\tAcceptable predictors (out of 5) for sample " + str(j) + ": " + str(mostLikelyClusterResult) + ", in cluster " + str(mostLikelyClusterIndex));
+    if (mostLikelyClusterResult >= acceptablePredictorThreshold):
+        #Accept to this cluster
+        targetClass[j] = trainingDataPaths[mostLikelyClusterIndex];     #store bird species name of the cluster
+print("Target classes:");
+print(targetClass);
+
+
+#Finished
