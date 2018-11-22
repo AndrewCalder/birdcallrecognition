@@ -11,12 +11,10 @@ import numpy;
 #Acceptable file types
 fileTypesAllowed = ["mp3"];#["wav", "mp3"];
 numFileTypes = len(fileTypesAllowed);
-#Training and validation data in these folders
+#Training, validation, and testing data in these folders
 dataPathPrefix = "data_";
 trainingDataPaths = ["crow"];#, "cardinal"];
 numDataPaths = len(trainingDataPaths);
-#Testing data (mixed bird species) in this folder?
-testingDataPath = "testing";
 
 #Sample sound file
 test = "test.wav";
@@ -128,26 +126,38 @@ for i in range(numDataPaths):
 #
 #   SPLIT DATA INTO TRAINING + VALIDATION SETS
 #
+#TODO: SPLIT ALSO INTO TESTING DATA!!!
 print("Splitting data...");
 proportionTraining = 0.75;   #the remaining data will be used for validation
-trainSize = round(proportionTraining * totalNumFiles);
-valSize = totalNumFiles - trainSize;
+trainSize = [0 for i in range(numDataPaths)];    #size of training data, split by bird species
+trainSizeTotal = 0;
+valSize = [0 for i in range(numDataPaths)];
+valSizeTotal = 0;
+#Calculate sizes of training + validation data sets (again, split by bird species)
+for i in range(numDataPaths):
+    trainSize[i] = round(proportionTraining * numFiles[i]);
+    valSize[i] = numFiles[i] - trainSize[i];
+trainSizeTotal = sum(trainSize);
+valSizeTotal = sum(valSize);
 #Initialize the data arrays
-dataTrain = [0 for j in range(trainSize)];
-dataVal = [0 for j in range(valSize)];
+dataTrain = [0 for j in range(trainSizeTotal)];
+dataVal = [0 for j in range(valSizeTotal)];
 #Stock the data arrays with appropriate sections of the master data array
 #First n% will be training set, last (100-n)% will be validation set
-currentIndex = 0;
+currentIndexTrain = 0;
+currentIndexVal = 0;
+counter = 0;    #used to choose n% of birds for training and (100-n)% for validation
 for i in range(numDataPaths):
+    counter = 0;    #reset counter, because new bird
     for j in range(numFiles[i]):
         #Check: which set should this sample be part of?
-        if (currentIndex < trainSize):      #training set
-            dataTrain[currentIndex] = data[i][j];
-        else:                               #validation set
-            dataTrain[currentIndex-trainSize] = data[i][j];
-        currentIndex += 1;
-print("dataTrain[0]:")
-print(dataTrain[0]);
+        if (counter < trainSize[i]):    #training set
+            dataTrain[currentIndexTrain] = data[i][j];
+            currentIndexTrain += 1;
+        else:                           #validation set
+            dataVal[currentIndexVal] = data[i][j];
+            currentIndexVal += 1;
+        counter += 1;
 
 
 #
@@ -165,19 +175,91 @@ assign to C.
 changes).
 """
 #Set number of clusters and initial centroids
+print("Calculating cluster centroids...");
 numClusters = numDataPaths;     #the number of bird species
-clusters = [[0.0 for k in range(numPredictors)] for i in range(numClusters)];
-for i in range(numClusters):
+clusters = [[0 for j in range(trainSizeTotal)] for c in range(numClusters)];  #enough space for all data in single cluster
+centroids = [[0.0 for k in range(numPredictors)] for c in range(numClusters)];
+clusterSize = [0 for c in range(numClusters)];
+#We'll also use these to store transformed data (each point is average of each predictor value- it turns out those are all arrays)
+dataTrainConcise = [[0.0 for k in range(numVars)] for j in range(trainSizeTotal)];
+#dataValConcise = [0 for j in range(valSizeTotal)]; TODO
+for c in range(numClusters):
     #Set initial centroids
-    #Here, a centroid is a set of values, one for each predictor
-    #Set centroids = to average of each bird's values
-    clusters[i] = 0.0;
+    #   Here, a centroid is a set of values, one for each predictor
+    #   Set centroids = to average of each bird's values
+    #Iterate through all data that has bird species 'i'
+    #Then take the average of each predictor var value
+    for j in range(trainSizeTotal):
+        #Does this sample have the right species?
+        if (dataTrain[j][numVars-1] == trainingDataPaths[c]):
+            #print("\tTRAINING SAMPLE " + str(j) + " MATCHED TO SPECIES " + trainingDataPaths[c]);
+            for k in range(numPredictors):
+                #Each predictor var is actually a giant array, so take the average of it
+                predVarMean = sum(dataTrain[j][k][0])/len(dataTrain[j][k][0]);  #don't ask about the extra [0], it's just there and I'm too scared to try and fix it
+                dataTrainConcise[j][k] = predVarMean;
+                centroids[c][k] += predVarMean;
+                #print("\t\tPred var avg: " + str(predVarMean));
+            clusterSize[c] += 1
+            #TODO: do all this 'concise' business elsewhere (at end of previous step)
+            dataTrainConcise[j][5] = trainingDataPaths[c];
+    #We've stored running sums, now divide them to calculate the final average
+    for k in range(numPredictors):
+        centroids[c][k] /= clusterSize[c];
+print("Cluster centroids:");
+print(centroids);
 #Centroid distance threshold = max distance to be considered part of a cluster
 #Set it to average of mean deviation from centroid of all birds
-cdt = 1.0;
-#Iterate through samples, find nearest centroid for each
-#Recompute centroids
-#TODO
+cdt = [0.0 for k in range(numPredictors)]
+for j in range(trainSizeTotal):
+    for c in range(numClusters):
+        for k in range(numPredictors):
+            #The deviation of this example
+            dev = (dataTrainConcise[j][k] - centroids[c][k]);
+            cdt[k] += dev;
+            #print("\tdev: " + str(dev));
+        #print("");
+#We have running sum, now take average
+for k in range(numPredictors):
+    cdt[k] /= trainSizeTotal;
+#Do cluster reassignment / centroid recomputation until no centroids are recomputed
+prevClusters = 0;
+passes = 1;
+while (prevClusters != clusters):
+    print("\tCluster pass 1...");
+    #Store previous cluster centroids
+    prevClusters = clusters;
+    #Wipe cluster data
+    for c in range(numClusters):
+        for j in range(trainSizeTotal):
+           clusters[c][j] = 0;
+        clusterSize[c] = 0;
+    #Iterate through samples, find if each is near a centroid
+    numAcceptablePredictors = 0;
+    for j in range(trainSizeTotal):
+        numAcceptablePredictors = 0;
+        for c in range(numClusters):
+            for k in range(numPredictors):
+                dev = (dataTrainConcise[j][k] - centroids[c][k]);
+                if (dev <= cdt[k]):
+                    #Deviation is within threshold, it's a member
+                    numAcceptablePredictors += 1;
+            #Do we accept?
+            print("Acceptable predictors (out of 5) for sample " + str(j) + ": " + str(numAcceptablePredictors));
+            if (numAcceptablePredictors >= 1):
+                #Accept to this cluster
+                clusters[c][clusterSize[c]] = j;    #just store the index
+                clusterSize[c] += 1;
+    #Recompute centroids
+    for c in range(numClusters):
+        for k in range(numPredictors):
+            for j in range(trainSizeTotal):
+                #Store running sum
+                centroids[c][k] += dataTrainConcise[j][k];
+    #Average, remember?
+    for c in range(numClusters):
+        for k in range(numPredictors):
+            centroids[c][k] /= clusterSize[c];
+    passes += 1;
 
 
 #
