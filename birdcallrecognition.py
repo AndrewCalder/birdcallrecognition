@@ -16,9 +16,11 @@ dataPathPrefix = "data_";
 trainingDataPaths = ["crow", "cardinal"];
 numDataPaths = len(trainingDataPaths);
 
+"""
 #Sample sound file
 test = "test.wav";
-test2 = trainingDataPaths[0] + "/XC171534-cardinalsong.mp3";
+test2 = dataPathPrefix + trainingDataPaths[0] + "/XC171534-cardinalsong.mp3";
+"""
 
 """
 # Beat tracking example
@@ -220,30 +222,35 @@ print("Cluster centroids:");
 print(centroids);
 #Centroid distance threshold = max distance to be considered part of a cluster
 #Set it to average of mean deviation from centroid of all birds
-cdt = [0.0 for k in range(numPredictors)]
+cdt = [[0.0 for k in range(numPredictors)] for c in range(numClusters)]
 for j in range(trainSizeTotal):
     for c in range(numClusters):
-        for k in range(numPredictors):
-            #The deviation of this example
-            dev = abs(dataTrainConcise[j][k] - centroids[c][k]);
-            cdt[k] += dev;
-            cdt[k] += dev;
-            #print("\tdev: " + str(dev));
-        #print("");
+        #Is the given sample in this cluster?
+        if (dataTrain[j][numVars-1] == trainingDataPaths[c]):
+            for k in range(numPredictors):
+                #The deviation of this example
+                dev = abs(dataTrainConcise[j][k] - centroids[c][k]);
+                cdt[c][k] += dev;
+                #print("\tdev: " + str(dev));
+            #print("");
+        #Else, continue to the next cluster
 #We have running sum, now take average
-allowanceFactor = 1.0;
-for k in range(numPredictors):
-    cdt[k] = abs(cdt[k]/trainSizeTotal);
-    cdt[k] *= allowanceFactor;
+allowanceFactor = 1.5;
+for c in range(numClusters):
+    for k in range(numPredictors):
+        cdt[c][k] = cdt[c][k] / clusterSize[c];
+        cdt[c][k] *= allowanceFactor;
+#print("\tCDT");
+#print(cdt);
 #Do cluster reassignment / centroid recomputation until no centroids are recomputed
 prevClusters = 0;
 passes = 1;
-acceptablePredictorThresholdProportion = 0.75;   #how many features do I need to 'pass' for in order to get in a cluster?
+acceptablePredictorThresholdProportion = 0.65;   #how many features do I need to 'pass' for in order to get in a cluster?
 acceptablePredictorThreshold = round(acceptablePredictorThresholdProportion * numPredictors);
 while (prevClusters != clusters):
     print("\tCluster pass " + str(passes) + "...");
     #Store previous cluster centroids
-    prevClusters = clusters;
+    prevClusters = clusters.copy();
     #Wipe cluster data
     for c in range(numClusters):
         for j in range(trainSizeTotal):
@@ -255,7 +262,7 @@ while (prevClusters != clusters):
         for c in range(numClusters):
             for k in range(numPredictors):
                 dev = abs(dataTrainConcise[j][k] - centroids[c][k]);
-                if (dev <= cdt[k]):
+                if (dev <= cdt[c][k]):
                     #Deviation is within threshold, it's a member
                     acceptablePredictors[j][c] += 1;
         #Do we fit in a cluster?
@@ -267,16 +274,41 @@ while (prevClusters != clusters):
             #Accept to this cluster
             clusters[mostLikelyClusterIndex][clusterSize[mostLikelyClusterIndex]] = j;    #just store the index
             clusterSize[mostLikelyClusterIndex] += 1;
+    #Wipe centroid data
+    for c in range(numClusters):
+        for k in range(numPredictors):
+            #Store running sum
+            centroids[c][k] = 0.0;
     #Recompute centroids
     for c in range(numClusters):
         for k in range(numPredictors):
-            for j in range(trainSizeTotal):
-                #Store running sum
-                centroids[c][k] += dataTrainConcise[j][k];
-    #Average, remember?
+            for j in range(clusterSize[c]):
+                    #Add each element of cluster to running sum
+                    centroids[c][k] += dataTrainConcise[clusters[c][j]][k];
+        #We have running sums, now divide to find the average
+        if (clusterSize[c] != 0):   #don't divide by 0
+            for k in range(numPredictors):
+                centroids[c][k] /= clusterSize[c];
+    #Recompute CDT (SAME CODE AS ABOVE)
+    """
+    #Centroid distance threshold = max distance to be considered part of a cluster
+    #Set it to average of mean deviation from centroid of all birds
+    cdt = [[0.0 for k in range(numPredictors)] for c in range(numClusters)]
+    for j in range(trainSizeTotal):
+        for c in range(numClusters):
+            for k in range(numPredictors):
+                #The deviation of this example
+                dev = abs(dataTrainConcise[j][k] - centroids[c][k]);
+                cdt[c][k] += dev;
+                print("\tdev: " + str(dev));
+            print("");
+    #We have running sum, now take average
+    allowanceFactor = 1.0;
     for c in range(numClusters):
         for k in range(numPredictors):
-            centroids[c][k] /= clusterSize[c];
+            cdt[c][k] = cdt[c][k] / clusterSize[c];
+            cdt[c][k] *= allowanceFactor;
+    """
     print("\t\tPrevClusters:");
     print(prevClusters);
     print("\t\tClusters:");
@@ -310,7 +342,7 @@ for j in range(testSizeTotal):
     for c in range(numClusters):
         for k in range(numPredictors):
             dev = abs(dataTestConcise[j][k] - centroids[c][k]);
-            if (dev <= cdt[k]):
+            if (dev <= cdt[c][k]):
                 #Deviation is within threshold, it's a member
                 acceptablePredictors[j][c] += 1;
     #Do we fit in a cluster?
